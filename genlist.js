@@ -7,21 +7,19 @@ const { fromPairs } = require('lodash');
 const rowNames = new Set(['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י', 'יא', 'יב', 'יג' ]);
 
 
-const seatmap = {};
-const WORKDIR = '/d/WebDrives/Dropbox/Personal/shul/Seating/5782 Seating';
+// const WORKDIR = '/d/WebDrives/Dropbox/Personal/shul/Seating/5782 Seating';
+const WORKDIR = '/mnt/c/Users/taragin/Temp/YN';
 
-function addSeat(name, seatlabel) {
+function addSeat(seatmap, name, seatlabel) {
     if (!seatlabel) {
         return;
     }
 
-    if (!seatmap.hasOwnProperty(name)) {
-        seatmap[name] = {};
-    }
-    if (!seatmap[name][seatlabel.rowname]) {
-        seatmap[name][seatlabel.rowname] = [];
-    }
-    seatmap[name][seatlabel.rowname].push(seatlabel.seat)
+    const { rowname, seat } = seatlabel;
+
+    seatmap.getOrInsertComputed(name, () => new Map())
+           .getOrInsertComputed(rowname, () => [])
+           .push(seat);
 }
 
 function isSeatNumber(val) {
@@ -37,17 +35,21 @@ function isRowName(val) {
 }
 
 function isSpecialField(val) {
-    return val && 
-           ((val === 'בימה') 
-            || (val === 'ארון קודש') 
-            || val.startsWith('ראש השנה') 
-            || val.startsWith('קהילת אהבת') 
-            || val.startsWith('מקומות')
-            || val.startsWith('יום כיפור')
-            || val.startsWith('מעבר')
-            || val.startsWith('ROSH')
-            || val.startsWith('YOM')
-           );
+    if (!val) {
+        return false;
+    }
+
+    const v = val.toUpperCase();
+
+    return (v === 'בימה')
+        || (v === 'ארון קודש')
+        || v.startsWith('ראש השנה')
+        || v.startsWith('קהילת אהבת')
+        || v.startsWith('מקומות')
+        || v.startsWith('יום כיפור')
+        || v.startsWith('מעבר')
+        || v.startsWith('ROSH')
+        || v.startsWith('YOM');
 }
 
 
@@ -69,6 +71,10 @@ async function getSheets() {
 
 function getSeatLabel(rows, rownum, colnum){
     let labelrow = rows[rownum-1]
+    if (!labelrow) {
+        console.log(`No label row above row:${rownum} col: ${colnum}`);
+        return null;
+    }
     let seat =  labelrow[colnum];
     let currspot = colnum-1;
     let rowname = null;
@@ -88,7 +94,7 @@ function getSeatLabel(rows, rownum, colnum){
 
 
 
-async function getRows(file, sheet) {
+async function getRows(file, sheet, seatmap = new Map()) {
     // let rows = await xlsxFile('/d/Mens\ 5782.xlsx', { sheet: 'MenRH' });
     let rows = await xlsxFile(file, { sheet});
        
@@ -96,27 +102,27 @@ async function getRows(file, sheet) {
 //         console.log(row);
         row.forEach((cell, cellnum) => {
             if (isName(cell)) {
-                addSeat(cell, getSeatLabel(rows, rownum, cellnum));
+                addSeat(seatmap, cell, getSeatLabel(rows, rownum, cellnum));
             }
         })
      });
 
      console.log(seatmap)
-    // return seatmap;     
+     return seatmap;
 }
 
 async function seatsToCsv(seatmap) {
-    let names = Object.keys(seatmap).sort();
+    let names = [...seatmap.keys()].sort();
 
     //console.log(sorted);
 
     let data = [];
 
     names.forEach(n=> {
-        let seats = seatmap[n];
-        let rows = Object.keys(seats).sort();
+        let seats = seatmap.get(n);
+        let rows = [...seats.keys()].sort();
         rows.forEach(r => {
-            let items = seats[r].sort()
+            let items = seats.get(r).sort()
             let range = `${items[0]}`
             if (items.length > 1) {
                 range += `-${items[items.length-1]}`
@@ -150,17 +156,17 @@ async function seatsToCsv(seatmap) {
 }
 
 async function seatsToExcel(seatmap) {
-    let names = Object.keys(seatmap).sort();
+    let names = [...seatmap.keys()].sort();
 
     //console.log(sorted);
 
     let data = [];
 
     names.forEach(n=> {
-        let seats = seatmap[n];
-        let rows = Object.keys(seats).sort();
+        let seats = seatmap.get(n);
+        let rows = [...seats.keys()].sort();
         rows.forEach(r => {
-            let items = seats[r].sort()
+            let items = seats.get(r).sort()
             let range = `${items[0]}`
             if (items.length > 1) {
                 range += `-${items[items.length-1]}`
@@ -252,33 +258,36 @@ async function seatsToExcel(seatmap) {
 
 
 
-async function genList() {
-    await getRows(`${WORKDIR}/Mens\ YK\ 5782.xlsx`, 'MenYK');
-    await getRows(`${WORKDIR}/Mens\ YK\ 5782.xlsx`, 'MenYK_Downstairs');
+async function getSheetRows(file, sheets) {
+    const seatmap = new Map();
+    for (const sheet of sheets) {
+        await getRows(file, sheet, seatmap);
+    }
+    return seatmap;
+}
+
+const MEN_RH_SHEETS = ['MenRH'];
+const MEN_YK_SHEETS = ['MenYK'];
+
+const WOMEN_RH_SHEETS = [
+    'Downstairs',
+    'Upstairs',
+    'Annexe',
+];
+
+const WOMEN_YK_SHEETS = [
+    'Downstairs',
+    'Upstairs',
+    'Annexe',
+];
+
+async function genList(file, sheets) {
+    const seatmap = await getSheetRows(file, sheets);
     seatsToExcel(seatmap);
 }
 
-async function genListWRH() {
-    await getRows('${WORKDIR}/Women KAT seats 5782 YK.xlsx', 'Women Downstairs RH');
-    await getRows('/d/Womens\ 5782.xlsx', 'Women upstairs-BM-RH');
-    await getRows('/d/Womens\ 5782.xlsx', 'Annex RH');
-    await getRows('/d/Womens\ 5782.xlsx', 'Women Hall RH');
 
-    
-    seatsToExcel(seatmap);
-}
-
-async function genListWYK() {
-    await getRows(`${WORKDIR}/Women KAT seats 5782 YK.xlsx`, 'Women Downstairs YK');
-    await getRows(`${WORKDIR}/Women KAT seats 5782 YK.xlsx`, 'Women upstairs-BM-YK');
-    await getRows(`${WORKDIR}/Women KAT seats 5782 YK.xlsx`, 'Annex YK');
-    await getRows(`${WORKDIR}/Women KAT seats 5782 YK.xlsx`, 'Women Hall YK');
-
-    
-    seatsToExcel(seatmap);
-}
-
-
-//genListWYK();
-genList();
+genList(`${WORKDIR}/Seating 5787.xlsx`, WOMEN_RH_SHEETS);
+//genList(`${WORKDIR}/Women KAT seats 5782 YK.xlsx`, WOMEN_YK_SHEETS);
+// genList(`${WORKDIR}/Mens YK 5782.xlsx`, MEN_YK_SHEETS);
 
