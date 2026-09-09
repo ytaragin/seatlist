@@ -1,14 +1,57 @@
 const xlsxFile = require('read-excel-file/node');
 //const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const Excel = require('exceljs');
+const fs = require('fs');
 const { fromPairs } = require('lodash');
 
 
-const rowNames = new Set(['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י', 'יא', 'יב', 'יג' ]);
-
-
 // const WORKDIR = '/d/WebDrives/Dropbox/Personal/shul/Seating/5782 Seating';
-const WORKDIR = '/mnt/c/Users/taragin/Temp/YN';
+const CONFIG = {
+    workdir: '/mnt/c/Users/taragin/Temp/YN',
+    csvFile: '/d/out.csv',
+    worksheetName: 'Seats',
+
+    // Column packing: aim for columnGoal columns, but never exceed maxRows per column.
+    maxRows: 24,
+    columnGoal: 4,
+
+    headers: {
+        name: 'שם',
+        row: 'שורה',
+        seats: 'כיסא',
+    },
+
+    rowNames: new Set(['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י', 'יא', 'יב', 'יג']),
+
+    specialFields: ['בימה', 'ארון קודש'],
+    specialFieldPrefixes: [
+        'ראש השנה',
+        'קהילת אהבת',
+        'מקומות',
+        'יום כיפור',
+        'מעבר',
+        'ROSH',
+        'YOM',
+    ],
+
+    jobs: {
+        menRH: {
+            input: 'Mens 5787.xlsx',
+            sheets: ['MenRH'],
+            output: 'seats men RH.xlsx',
+        },
+        womenRH: {
+            input: 'Women Seating RH 5787.xlsx',
+            sheets: ['Downstairs', 'Upstairs', 'Annexe'],
+            output: 'seats women RH.xlsx',
+        },
+        womenYK: {
+            input: 'Women KAT seats 5782 YK.xlsx',
+            sheets: ['Downstairs', 'Upstairs', 'Annexe'],
+            output: 'seats women YK.xlsx',
+        },
+    },
+};
 
 function addSeat(seatmap, name, seatlabel) {
     if (!seatlabel) {
@@ -31,7 +74,7 @@ function isSeatNumber(val) {
 }
 
 function isRowName(val) {
-    return (val && rowNames.has(val));
+    return (val && CONFIG.rowNames.has(val));
 }
 
 function isSpecialField(val) {
@@ -41,15 +84,8 @@ function isSpecialField(val) {
 
     const v = val.toUpperCase();
 
-    return (v === 'בימה')
-        || (v === 'ארון קודש')
-        || v.startsWith('ראש השנה')
-        || v.startsWith('קהילת אהבת')
-        || v.startsWith('מקומות')
-        || v.startsWith('יום כיפור')
-        || v.startsWith('מעבר')
-        || v.startsWith('ROSH')
-        || v.startsWith('YOM');
+    return CONFIG.specialFields.includes(v)
+        || CONFIG.specialFieldPrefixes.some(prefix => v.startsWith(prefix));
 }
 
 
@@ -60,8 +96,8 @@ function isName(val) {
         && !isRowName(val)
 }
 
-async function getSheets() {
-    let sheets = await xlsxFile('./Mens\ 5780.xlsx', { getSheets: true });
+async function getSheets(file) {
+    let sheets = await xlsxFile(file, { getSheets: true });
        
     sheets.forEach((obj)=>{
          console.log(obj.name);
@@ -139,11 +175,11 @@ async function seatsToCsv(seatmap) {
 
 
     const csvWriter = createCsvWriter({
-        path: '/d/out.csv',
+        path: CONFIG.csvFile,
         header: [
-          {id: 'name', title: 'שם'},
-          {id: 'row', title: 'שורה'},
-          {id: 'seats', title: 'כיסא'}
+          {id: 'name', title: CONFIG.headers.name},
+          {id: 'row', title: CONFIG.headers.row},
+          {id: 'seats', title: CONFIG.headers.seats}
         ]
       });
       
@@ -155,7 +191,19 @@ async function seatsToCsv(seatmap) {
 
 }
 
-async function seatsToExcel(seatmap) {
+// Packs the data into columnGoal columns if it fits within maxRows, otherwise adds columns.
+function calcLayout(itemCount, maxRows = CONFIG.maxRows, columnGoal = CONFIG.columnGoal) {
+    if (itemCount <= 0) {
+        return { rowCount: 0, colCount: 0 };
+    }
+
+    let rowCount = Math.min(maxRows, Math.ceil(itemCount / columnGoal));
+    let colCount = Math.ceil(itemCount / rowCount);
+
+    return { rowCount, colCount };
+}
+
+async function seatsToExcel(seatmap, outputPath) {
     let names = [...seatmap.keys()].sort();
 
     //console.log(sorted);
@@ -181,20 +229,19 @@ async function seatsToExcel(seatmap) {
     })
 
     let workbook = new Excel.Workbook();
-    let worksheet = workbook.addWorksheet('Seats');
+    let worksheet = workbook.addWorksheet(CONFIG.worksheetName);
 
 
 
-    const MAXROWS = 23;
-    let colCount = Math.ceil(data.length/MAXROWS);
+    const { rowCount, colCount } = calcLayout(data.length);
 
     let headerRow
     let columns = [];
 
     for (let i=0; i<colCount; i++ ){
-        columns.push({header: 'שם', key: `name${i}`});
-        columns.push({header: 'שורה', key: `row${i}`});
-        columns.push({header: 'כיסא', key: `seats${i}`});
+        columns.push({header: CONFIG.headers.name, key: `name${i}`});
+        columns.push({header: CONFIG.headers.row, key: `row${i}`});
+        columns.push({header: CONFIG.headers.seats, key: `seats${i}`});
         columns.push({header: '', key: `blank${i}`});
     }
 
@@ -206,10 +253,10 @@ async function seatsToExcel(seatmap) {
 
     let maxDone = 0;
 
-    for (let i=0; (i<MAXROWS); i++) {// && maxDone<data.length); i++ ){
+    for (let i=0; (i<rowCount); i++) {// && maxDone<data.length); i++ ){
         let e = {};
         for (let j=0; j<colCount; j++ ){
-            let curSpot = j*MAXROWS + i;
+            let curSpot = j*rowCount + i;
             let d = {};
             if (curSpot < data.length) {
                 d = data[curSpot];
@@ -235,7 +282,10 @@ async function seatsToExcel(seatmap) {
     //     worksheet.addRow(e)
     // });
 
-    workbook.xlsx.writeFile(`${WORKDIR}/seats.xlsx`)
+    await workbook.xlsx.writeFile(outputPath)
+    console.log(`Wrote ${outputPath}`)
+
+    return { entryCount: data.length, rowCount, colCount };
 
     // const csvWriter = createCsvWriter({
     //     path: '/d/out.csv',
@@ -266,28 +316,48 @@ async function getSheetRows(file, sheets) {
     return seatmap;
 }
 
-const MEN_RH_SHEETS = ['MenRH'];
-const MEN_YK_SHEETS = ['MenYK'];
-
-const WOMEN_RH_SHEETS = [
-    'Downstairs',
-    'Upstairs',
-    'Annexe',
-];
-
-const WOMEN_YK_SHEETS = [
-    'Downstairs',
-    'Upstairs',
-    'Annexe',
-];
-
-async function genList(file, sheets) {
-    const seatmap = await getSheetRows(file, sheets);
-    seatsToExcel(seatmap);
+async function genList(inputPath, sheets, outputPath) {
+    const seatmap = await getSheetRows(inputPath, sheets);
+    return seatsToExcel(seatmap, outputPath);
 }
 
+function printSummary(results) {
+    console.log('\nSummary:');
+    for (const r of results) {
+        console.log(`  ${r.name}: ${r.status}`);
+        console.log(`      in:  ${r.input}`);
+        console.log(`      out: ${r.output ?? '(none)'}`);
+        if (r.stats) {
+            console.log(`      entries: ${r.stats.entryCount}, columns: ${r.stats.colCount}, rows per column: ${r.stats.rowCount}`);
+        }
+    }
+}
 
-genList(`${WORKDIR}/Seating 5787.xlsx`, WOMEN_RH_SHEETS);
-//genList(`${WORKDIR}/Women KAT seats 5782 YK.xlsx`, WOMEN_YK_SHEETS);
-// genList(`${WORKDIR}/Mens YK 5782.xlsx`, MEN_YK_SHEETS);
+async function genAll() {
+    const results = [];
+
+    for (const [name, job] of Object.entries(CONFIG.jobs)) {
+        const inputPath = `${CONFIG.workdir}/${job.input}`;
+        const outputPath = `${CONFIG.workdir}/${job.output}`;
+
+        // A missing input only skips its own job; the remaining jobs still run.
+        if (!fs.existsSync(inputPath)) {
+            console.log(`Skipping ${name}: input file not found`);
+            results.push({ name, input: inputPath, output: null, status: 'SKIPPED (input not found)' });
+            continue;
+        }
+
+        try {
+            const stats = await genList(inputPath, job.sheets, outputPath);
+            results.push({ name, input: inputPath, output: outputPath, status: 'OK', stats });
+        } catch (err) {
+            console.log(`Failed ${name}: ${err.message}`);
+            results.push({ name, input: inputPath, output: null, status: `FAILED (${err.message})` });
+        }
+    }
+
+    printSummary(results);
+}
+
+genAll();
 
