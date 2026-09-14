@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test.js"
   },
   "author": "",
   "license": "ISC",
@@ -12,8 +12,10 @@
     "node": ">=26"
   },
   "dependencies": {
+    "@xmldom/xmldom": "^0.9.12",
     "csv-writer": "^1.6.0",
     "exceljs": "^4.3.0",
+    "jszip": "^3.10.2",
     "lodash": "^4.17.21",
     "read-excel-file": "^5.2.8"
   }

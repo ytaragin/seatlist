@@ -2,6 +2,7 @@ const xlsxFile = require('read-excel-file/node');
 //const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const Excel = require('exceljs');
 const fs = require('fs');
+const { createSeatLayout, writeToSource } = require('./sourceWorkbook');
 const { fromPairs } = require('lodash');
 
 
@@ -11,7 +12,7 @@ const CONFIG = {
     csvFile: '/d/out.csv',
     worksheetName: 'Seats',
 
-    // Column packing: aim for columnGoal columns, but never exceed maxRows per column.
+    // Column packing: use outputRange height as the row limit, or maxRows without a range.
     maxRows: 24,
     columnGoal: 4,
 
@@ -39,6 +40,16 @@ const CONFIG = {
             input: 'Mens 5787.xlsx',
             sheets: ['MenRH'],
             output: 'seats men RH.xlsx',
+            outputSheet: 'RH_Names',
+            outputRange: 'B7:P32',
+
+        },
+        menYK: {
+            input: 'Mens 5787.xlsx',
+            sheets: ['MenYK'],
+            output: 'seats men YK.xlsx',
+            outputSheet: 'YK_Names',
+            outputRange: 'B7:P32',
         },
         womenRH: {
             input: 'Women Seating RH 5787.xlsx',
@@ -191,117 +202,56 @@ async function seatsToCsv(seatmap) {
 
 }
 
-// Packs the data into columnGoal columns if it fits within maxRows, otherwise adds columns.
-function calcLayout(itemCount, maxRows = CONFIG.maxRows, columnGoal = CONFIG.columnGoal) {
-    if (itemCount <= 0) {
-        return { rowCount: 0, colCount: 0 };
+function seatmapToEntries(seatmap) {
+    const entries = [];
+
+    for (const name of [...seatmap.keys()].sort()) {
+        const seatsByRow = seatmap.get(name);
+        for (const row of [...seatsByRow.keys()].sort()) {
+            const seats = seatsByRow.get(row).sort((first, second) => first - second);
+            const range = seats.length > 1
+                ? `${seats[0]}-${seats[seats.length - 1]}`
+                : `${seats[0]}`;
+            entries.push({ name, row, seats: range });
+        }
     }
 
-    let rowCount = Math.min(maxRows, Math.ceil(itemCount / columnGoal));
-    let colCount = Math.ceil(itemCount / rowCount);
-
-    return { rowCount, colCount };
+    return entries;
 }
 
-async function seatsToExcel(seatmap, outputPath) {
-    let names = [...seatmap.keys()].sort();
+function createSeatColumns(colCount) {
+    const columns = [];
 
-    //console.log(sorted);
-
-    let data = [];
-
-    names.forEach(n=> {
-        let seats = seatmap.get(n);
-        let rows = [...seats.keys()].sort();
-        rows.forEach(r => {
-            let items = seats.get(r).sort()
-            let range = `${items[0]}`
-            if (items.length > 1) {
-                range += `-${items[items.length-1]}`
-            }
-            data.push({
-                name: n,
-                row: r,
-                seats: range
-            });
-        })
-
-    })
-
-    let workbook = new Excel.Workbook();
-    let worksheet = workbook.addWorksheet(CONFIG.worksheetName);
-
-
-
-    const { rowCount, colCount } = calcLayout(data.length);
-
-    let headerRow
-    let columns = [];
-
-    for (let i=0; i<colCount; i++ ){
-        columns.push({header: CONFIG.headers.name, key: `name${i}`});
-        columns.push({header: CONFIG.headers.row, key: `row${i}`});
-        columns.push({header: CONFIG.headers.seats, key: `seats${i}`});
-        columns.push({header: '', key: `blank${i}`});
+    for (let group = 0; group < colCount; group++) {
+        columns.push({header: CONFIG.headers.name, key: `name${group}`});
+        columns.push({header: CONFIG.headers.row, key: `row${group}`});
+        columns.push({header: CONFIG.headers.seats, key: `seats${group}`});
+        columns.push({header: '', key: `blank${group}`});
     }
 
-    worksheet.columns = columns;
+    return columns;
+}
 
-    worksheet.views = [
-        {rightToLeft: true}
-    ];    
+async function seatsToExcel(seatmap, outputPath, destination) {
+    const entries = seatmapToEntries(seatmap);
+    const layout = destination
+        ? await writeToSource(entries, destination.inputPath, destination.sheetName, destination.range, CONFIG)
+        : createSeatLayout(entries, CONFIG.maxRows, CONFIG.columnGoal);
 
-    let maxDone = 0;
+    const workbook = new Excel.Workbook();
+    const worksheet = workbook.addWorksheet(CONFIG.worksheetName);
+    const { rowCount, colCount } = layout;
 
-    for (let i=0; (i<rowCount); i++) {// && maxDone<data.length); i++ ){
-        let e = {};
-        for (let j=0; j<colCount; j++ ){
-            let curSpot = j*rowCount + i;
-            let d = {};
-            if (curSpot < data.length) {
-                d = data[curSpot];
-            } else {
-                d = {
-                    name: "",
-                    row: "",
-                    seats: "",
-                    blank: ""
-                };
-            }
-            e[`name${j}`] = d.name;
-            e[`row${j}`] = d.row;
-            e[`seats${j}`] = d.seats;
-            e[`blank${j}`] = "";            
-
-            maxDone = Math.max(maxDone, curSpot);
-        }
-        worksheet.addRow(e)
+    worksheet.columns = createSeatColumns(colCount);
+    worksheet.views = [{rightToLeft: true}];
+    for (const values of layout.rows) {
+        worksheet.addRow(values.map(value => value ?? ''));
     }
-    
-    // data.forEach((e) => {
-    //     worksheet.addRow(e)
-    // });
 
-    await workbook.xlsx.writeFile(outputPath)
-    console.log(`Wrote ${outputPath}`)
+    await workbook.xlsx.writeFile(outputPath);
+    console.log(`Wrote ${outputPath}`);
 
-    return { entryCount: data.length, rowCount, colCount };
-
-    // const csvWriter = createCsvWriter({
-    //     path: '/d/out.csv',
-    //     header: [
-    //       {id: 'name', title: 'שם'},
-    //       {id: 'row', title: 'שורה'},
-    //       {id: 'seats', title: 'כיסא'}
-    //     ]
-    //   });
-      
-              
-    //   csvWriter
-    //       .writeRecords(data)
-    //       .then(()=> console.log('The CSV file was written successfully'));
-
-
+    return { entryCount: entries.length, rowCount, colCount };
 }
 
 
@@ -316,9 +266,20 @@ async function getSheetRows(file, sheets) {
     return seatmap;
 }
 
-async function genList(inputPath, sheets, outputPath) {
+async function genList(inputPath, sheets, outputPath, job = {}) {
+    const hasDestination = job.outputSheet !== undefined || job.outputRange !== undefined;
+    if (hasDestination && (!job.outputSheet || !job.outputRange)) {
+        throw new Error('Both outputSheet and outputRange are required for source workbook output');
+    }
+    if (hasDestination && sheets.includes(job.outputSheet)) {
+        throw new Error('The output sheet must not be one of the input sheets');
+    }
     const seatmap = await getSheetRows(inputPath, sheets);
-    return seatsToExcel(seatmap, outputPath);
+    return seatsToExcel(seatmap, outputPath, hasDestination ? {
+        inputPath,
+        sheetName: job.outputSheet,
+        range: job.outputRange,
+    } : undefined);
 }
 
 function printSummary(results) {
@@ -348,7 +309,7 @@ async function genAll() {
         }
 
         try {
-            const stats = await genList(inputPath, job.sheets, outputPath);
+            const stats = await genList(inputPath, job.sheets, outputPath, job);
             results.push({ name, input: inputPath, output: outputPath, status: 'OK', stats });
         } catch (err) {
             console.log(`Failed ${name}: ${err.message}`);
@@ -359,5 +320,9 @@ async function genAll() {
     printSummary(results);
 }
 
-genAll();
+if (require.main === module) {
+    genAll();
+}
+
+module.exports = { genList };
 
