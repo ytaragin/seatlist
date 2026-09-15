@@ -6,63 +6,8 @@ const { createSeatLayout, writeToSource } = require('./sourceWorkbook');
 const { fromPairs } = require('lodash');
 
 
-// const WORKDIR = '/d/WebDrives/Dropbox/Personal/shul/Seating/5782 Seating';
-const CONFIG = {
-    workdir: '/mnt/c/Users/taragin/Temp/YN',
-    csvFile: '/d/out.csv',
-    worksheetName: 'Seats',
-
-    // Column packing: use outputRange height as the row limit, or maxRows without a range.
-    maxRows: 24,
-    columnGoal: 4,
-
-    headers: {
-        name: 'שם',
-        row: 'שורה',
-        seats: 'כיסא',
-    },
-
-    rowNames: new Set(['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י', 'יא', 'יב', 'יג']),
-
-    specialFields: ['בימה', 'ארון קודש'],
-    specialFieldPrefixes: [
-        'ראש השנה',
-        'קהילת אהבת',
-        'מקומות',
-        'יום כיפור',
-        'מעבר',
-        'ROSH',
-        'YOM',
-    ],
-
-    jobs: {
-        menRH: {
-            input: 'Mens 5787.xlsx',
-            sheets: ['MenRH'],
-            output: 'seats men RH.xlsx',
-            outputSheet: 'RH_Names',
-            outputRange: 'B7:P32',
-
-        },
-        menYK: {
-            input: 'Mens 5787.xlsx',
-            sheets: ['MenYK'],
-            output: 'seats men YK.xlsx',
-            outputSheet: 'YK_Names',
-            outputRange: 'B7:P32',
-        },
-        womenRH: {
-            input: 'Women Seating RH 5787.xlsx',
-            sheets: ['Downstairs', 'Upstairs', 'Annexe'],
-            output: 'seats women RH.xlsx',
-        },
-        womenYK: {
-            input: 'Women KAT seats 5782 YK.xlsx',
-            sheets: ['Downstairs', 'Upstairs', 'Annexe'],
-            output: 'seats women YK.xlsx',
-        },
-    },
-};
+const CONFIG = require('./config.json');
+const ROW_NAMES = new Set(CONFIG.rowNames);
 
 function addSeat(seatmap, name, seatlabel) {
     if (!seatlabel) {
@@ -85,7 +30,7 @@ function isSeatNumber(val) {
 }
 
 function isRowName(val) {
-    return (val && CONFIG.rowNames.has(val));
+    return (val && ROW_NAMES.has(val));
 }
 
 function isSpecialField(val) {
